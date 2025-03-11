@@ -6,11 +6,12 @@ from PIL import Image, ImageTk
 import textwrap
 import subprocess
 import sys
+import base64
 
 class GuideCreator:
     def __init__(self, root):
         self.root = root
-        self.root.title("Guide Creator")
+        self.root.title("Guide Creator Wizard")
         self.root.geometry("400x300")
 
         self.steps = []
@@ -65,8 +66,6 @@ class GuideCreator:
         self.steps = [{} for _ in range(self.num_steps)]
         self.create_step_window()
 
-
-#   This program was coded with love by Arlen W. Kirkaldie
     def create_step_window(self):
         self.step_window = tk.Toplevel(self.root)
         self.step_window.title(f"Step {self.current_step + 1}")
@@ -95,10 +94,13 @@ class GuideCreator:
         self.text_widget = tk.Text(self.step_window, width=50, height=10, wrap="word")
         self.text_widget.pack()
 
-        # If editing an existing step, load its data (stripping HTML tags)
+        # If editing an existing step, load its data.
         if self.steps[self.current_step]:
             step_data = self.steps[self.current_step]
-            self.image_path_entry.insert(0, step_data.get("image", ""))
+            image_val = step_data.get("image", "")
+            if isinstance(image_val, dict):
+                image_val = image_val.get("file", "")
+            self.image_path_entry.insert(0, image_val)
             self.text_widget.insert("1.0", self.html_to_plain(step_data.get("text", "")))
 
         tk.Button(self.step_window, text="Preview", command=self.preview_step).pack(pady=5)
@@ -174,7 +176,7 @@ class GuideCreator:
                             color = tag.split("_", 1)[1]
                             html += f'<font color="{color}">'
                 prev_tags = current_tags
-            # Escape HTML special characters (optional, for robustness)
+            # Escape HTML special characters
             if char == "<":
                 html += "&lt;"
             elif char == ">":
@@ -238,12 +240,10 @@ class GuideCreator:
         current_tags = []
         pattern = re.compile(r'(<(/?)(b|u|font)(?:\s+color="([^"]+)")?>)')
         for match in pattern.finditer(html):
-            # Insert text before the tag with current formatting.
             text_widget.insert("end", html[pos:match.start()], tuple(current_tags))
             tag = match.group(3)
             closing = match.group(2)
             if not closing:
-                # Opening tag.
                 if tag == "b":
                     current_tags.append("bold")
                     text_widget.tag_config("bold", font=("TkDefaultFont", 10, "bold"))
@@ -256,7 +256,6 @@ class GuideCreator:
                     current_tags.append(tag_name)
                     text_widget.tag_config(tag_name, foreground=color)
             else:
-                # Closing tag.
                 if tag == "b" and "bold" in current_tags:
                     current_tags.remove("bold")
                 elif tag == "u" and "underline" in current_tags:
@@ -277,7 +276,20 @@ class GuideCreator:
             messagebox.showerror("Error", "Please enter both image and text.")
             return
 
-        self.steps[self.current_step] = {"image": image_path, "text": html_text}
+        # Read and encode the image file in base64.
+        try:
+            with open(image_path, "rb") as img_file:
+                img_bytes = img_file.read()
+                img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error reading image: {e}")
+            return
+
+        ext = os.path.splitext(image_path)[1][1:]
+        data_uri = f"data:image/{ext};base64,{img_b64}"
+
+        # Save both the file path and the embedded data.
+        self.steps[self.current_step] = {"image": {"file": image_path, "data": data_uri}, "text": html_text}
         self.current_step += 1
 
         if self.current_step < self.num_steps:
@@ -298,20 +310,20 @@ class GuideCreator:
 
         messagebox.showinfo("Success", f"Guide created! Run it with: python {script_filename}")
 
-        # Now run PyInstaller as a subprocess to create an .exe.
-        # On Windows, ensure the Tcl/Tk data is included.
+        # Run PyInstaller to create a windowed .exe with Tcl/Tk data.
         if sys.platform.startswith("win"):
             tcl_dir = os.environ.get("TCL_LIBRARY", os.path.join(sys.exec_prefix, "tcl", "tcl8.6"))
             tk_dir = os.environ.get("TK_LIBRARY", os.path.join(sys.exec_prefix, "tcl", "tk8.6"))
             add_data_option = f'--add-data "{tcl_dir};tcl" --add-data "{tk_dir};tk"'
         else:
             add_data_option = ""
-        pyinstaller_cmd = f'pyinstaller --onefile {add_data_option} {script_filename}'
+        pyinstaller_cmd = f'pyinstaller --onefile --windowed {add_data_option} {script_filename}'
         subprocess.run(pyinstaller_cmd, shell=True)
         self.root.quit()
 
     def generate_script(self, config_filename):
-        # The generated guide script now uses a minimal HTML parser to render rich text.
+        # The generated guide script uses a minimal HTML parser to render rich text and
+        # now handles embedded Base64 image data.
         return textwrap.dedent(f"""
             import json
             import tkinter as tk
@@ -319,6 +331,8 @@ class GuideCreator:
             from PIL import Image, ImageTk
             from html.parser import HTMLParser
             import tkinter.font as tkfont
+            import base64
+            from io import BytesIO
 
             class RichTextParser(HTMLParser):
                 def __init__(self, text_widget):
@@ -365,7 +379,7 @@ class GuideCreator:
             class VirtualGuide:
                 def __init__(self, root, guide_data):
                     self.root = root
-                    self.root.wm_attributes("-topmost", True)  # always on top
+                    self.root.wm_attributes("-topmost", True)
                     self.root.geometry("300x500")
                     self.steps = guide_data["steps"]
                     self.current_step = 0
@@ -385,12 +399,17 @@ class GuideCreator:
                 def load_step(self):
                     if self.current_step < len(self.steps):
                         step = self.steps[self.current_step]
-                        try:
-                            img = Image.open(step["image"])
-                        except Exception as e:
-                            messagebox.showerror("Error", f"Could not load image: {{e}}")
-                            self.root.destroy()
-                            return
+                        img_data = ""
+                        if isinstance(step["image"], dict):
+                            img_data = step["image"].get("data", "")
+                        else:
+                            img_data = step["image"]
+                        if img_data.startswith("data:image"):
+                            b64_data = img_data.split(",", 1)[1]
+                            img_bytes = base64.b64decode(b64_data)
+                            img = Image.open(BytesIO(img_bytes))
+                        else:
+                            img = Image.open(img_data)
                         img.thumbnail((250, 250))
                         self.image = ImageTk.PhotoImage(img)
                         self.canvas.delete("all")
