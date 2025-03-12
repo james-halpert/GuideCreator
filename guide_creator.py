@@ -302,6 +302,7 @@ class GuideCreator:
 
     def save_guide(self):
         config_filename = f"{self.process_name}.json"
+        # Removed placement option from the JSON output.
         with open(config_filename, "w", encoding="utf-8") as config_file:
             json.dump({"name": self.process_name, "steps": self.steps}, config_file, indent=4)
 
@@ -397,8 +398,17 @@ class GuideCreator:
                     self.text_widget.pack()
                     self.text_widget.config(state="disabled")
 
-                    self.next_button = tk.Button(root, text="Next", command=self.next_step)
-                    self.next_button.pack(pady=5)
+                    # Create a frame to hold both Back and Next buttons
+                    button_frame = tk.Frame(root)
+                    button_frame.pack(pady=5)
+
+                    # Back button (initially disabled on the first step)
+                    self.back_button = tk.Button(button_frame, text="Back", command=self.prev_step, state="disabled")
+                    self.back_button.pack(side="left", padx=5)
+
+                    # Next button (will change to "Finish" on the last step)
+                    self.next_button = tk.Button(button_frame, text="Next", command=self.next_step)
+                    self.next_button.pack(side="left", padx=5)
 
                     self.load_step()
 
@@ -426,15 +436,39 @@ class GuideCreator:
                         parser = RichTextParser(self.text_widget)
                         parser.feed(step["text"])
                         self.text_widget.config(state="disabled")
+
+                        # Update Back button: disable on the first step; enable otherwise.
+                        if self.current_step == 0:
+                            self.back_button.config(state="disabled")
+                        else:
+                            self.back_button.config(state="normal")
+
+                        # Update Next button: change to "Finish" on the last step.
+                        if self.current_step == len(self.steps) - 1:
+                            self.next_button.config(text="Finish")
+                        else:
+                            self.next_button.config(text="Next")
                     else:
                         self.root.destroy()
 
                 def next_step(self):
-                    self.current_step += 1
-                    self.load_step()
+                    if self.current_step < len(self.steps) - 1:
+                        self.current_step += 1
+                        self.load_step()
+                    else:
+                        self.root.destroy()
+
+                def prev_step(self):
+                    if self.current_step > 0:
+                        self.current_step -= 1
+                        self.load_step()
 
             if __name__ == "__main__":
                 root = tk.Tk()
+                # Set the desired window dimensions.
+                window_width = 300
+                window_height = 500
+                root.geometry(f"{{window_width}}x{{window_height}}")
                 root.title(guide_data["name"])
                 VirtualGuide(root, guide_data)
                 root.mainloop()
