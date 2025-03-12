@@ -101,7 +101,8 @@ class GuideCreator:
             if isinstance(image_val, dict):
                 image_val = image_val.get("file", "")
             self.image_path_entry.insert(0, image_val)
-            self.text_widget.insert("1.0", self.html_to_plain(step_data.get("text", "")))
+            # Instead of stripping HTML, reapply formatting so rich text appears.
+            self.insert_formatted_text(self.text_widget, step_data.get("text", ""))
 
         tk.Button(self.step_window, text="Preview", command=self.preview_step).pack(pady=5)
         tk.Button(self.step_window, text="Next", command=self.save_step).pack(pady=5)
@@ -322,8 +323,10 @@ class GuideCreator:
         self.root.quit()
 
     def generate_script(self, config_filename):
-        # The generated guide script uses a minimal HTML parser to render rich text and
-        # now handles embedded Base64 image data.
+        # Read the JSON file contents
+        with open(config_filename, "r", encoding="utf-8") as file:
+            json_content = file.read()
+        # Embed the JSON data into the generated script using json.dumps to escape it properly.
         return textwrap.dedent(f"""
             import json
             import tkinter as tk
@@ -333,6 +336,9 @@ class GuideCreator:
             import tkinter.font as tkfont
             import base64
             from io import BytesIO
+
+            # Embedded JSON data for the guide
+            guide_data = json.loads({json.dumps(json_content)})
 
             class RichTextParser(HTMLParser):
                 def __init__(self, text_widget):
@@ -428,8 +434,6 @@ class GuideCreator:
                     self.load_step()
 
             if __name__ == "__main__":
-                with open("{config_filename}", "r", encoding="utf-8") as file:
-                    guide_data = json.load(file)
                 root = tk.Tk()
                 root.title(guide_data["name"])
                 VirtualGuide(root, guide_data)
